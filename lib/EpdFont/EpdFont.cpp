@@ -44,7 +44,10 @@ void EpdFont::getTextBounds(const char* string, const int startX, const int star
       continue;
     }
 
-    const int raiseBy = isCombining ? combiningMark::raiseAboveBase(glyph->top, glyph->height, lastBaseTop) : 0;
+    const combiningMark::Anchor markAnchor =
+        isCombining ? combiningMark::anchorFor(cp) : combiningMark::Anchor::CenterRaised;
+    const int raiseBy =
+        isCombining ? combiningMark::raiseAboveBase(markAnchor, glyph->top, glyph->height, lastBaseTop) : 0;
 
     if (!isCombining && prevCp != 0) {
       const auto kernFP = getKerning(prevCp, cp);  // 4.4 fixed-point kern
@@ -52,7 +55,8 @@ void EpdFont::getTextBounds(const char* string, const int startX, const int star
     }
 
     const int glyphBaseX =
-        isCombining ? combiningMark::centerOver(lastBaseX, lastBaseLeft, lastBaseWidth, glyph->left, glyph->width)
+        isCombining ? combiningMark::anchorOver(markAnchor, lastBaseX, lastBaseLeft, lastBaseWidth, glyph->left,
+                                                glyph->width, prevCp)
                     : lastBaseX;
     const int glyphBaseY = startY - raiseBy;
 

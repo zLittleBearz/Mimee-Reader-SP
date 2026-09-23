@@ -533,13 +533,27 @@ void GfxRenderer::drawText(const int fontId, const int x, const int y, const cha
 
   uint32_t cp;
   uint32_t prevCp = 0;
+  int stackedThaiMinY = 0;
+  bool hasStackedThaiUpper = false;
   while ((cp = utf8NextCodepoint(reinterpret_cast<const uint8_t**>(&text)))) {
     if (utf8IsCombiningMark(cp)) {
       const EpdGlyph* combiningGlyph = font.getGlyph(cp, style);
       if (!combiningGlyph) continue;
-      const int raiseBy = combiningMark::raiseAboveBase(combiningGlyph->top, combiningGlyph->height, lastBaseTop);
-      const int combiningX = combiningMark::centerOver(lastBaseX, lastBaseLeft, lastBaseWidth, combiningGlyph->left,
-                                                       combiningGlyph->width);
+      const combiningMark::Anchor markAnchor = combiningMark::anchorFor(cp);
+      int raiseBy = combiningMark::raiseAboveBase(markAnchor, combiningGlyph->top, combiningGlyph->height, lastBaseTop);
+      if (utf8IsThaiUpperLevelThreeMark(cp)) {
+        const uint8_t* peekPtr = reinterpret_cast<const uint8_t*>(text);
+        const uint32_t nextCp = utf8NextCodepoint(&peekPtr);
+        if (nextCp == 0x0E33) {
+          if (const EpdGlyph* nikhahitGlyph = font.getGlyph(0x0E4D, style)) {
+            thaiUpperMarkStack(0x0E4D, nikhahitGlyph->top, nikhahitGlyph->height, yPos, &raiseBy, &stackedThaiMinY,
+                                &hasStackedThaiUpper);
+          }
+        }
+      }
+      thaiUpperMarkStack(cp, combiningGlyph->top, combiningGlyph->height, yPos, &raiseBy, &stackedThaiMinY, &hasStackedThaiUpper);
+      const int combiningX = combiningMark::anchorOver(markAnchor, lastBaseX, lastBaseLeft, lastBaseWidth,
+                                                       combiningGlyph->left, combiningGlyph->width, prevCp);
       renderCharImpl<TextRotation::None>(*this, renderMode, font, cp, combiningX, yPos - raiseBy, black, style);
       continue;
     }
@@ -559,6 +573,7 @@ void GfxRenderer::drawText(const int fontId, const int x, const int y, const cha
     lastBaseLeft = glyph ? glyph->left : 0;
     lastBaseWidth = glyph ? glyph->width : 0;
     lastBaseTop = glyph ? glyph->top : 0;
+    hasStackedThaiUpper = false;
     prevAdvanceFP = glyph ? glyph->advanceX : 0;  // 12.4 fixed-point
 
     const bool isSupSub = (style & (EpdFontFamily::SUP | EpdFontFamily::SUB)) != 0;
@@ -2034,13 +2049,27 @@ void GfxRenderer::drawTextRotated90CW(const int fontId, const int x, const int y
 
   uint32_t cp;
   uint32_t prevCp = 0;
+  int stackedThaiMinY = 0;
+  bool hasStackedThaiUpper = false;
   while ((cp = utf8NextCodepoint(reinterpret_cast<const uint8_t**>(&text)))) {
     if (utf8IsCombiningMark(cp)) {
       const EpdGlyph* combiningGlyph = font.getGlyph(cp, style);
       if (!combiningGlyph) continue;
-      const int raiseBy = combiningMark::raiseAboveBase(combiningGlyph->top, combiningGlyph->height, lastBaseTop);
+      const combiningMark::Anchor markAnchor = combiningMark::anchorFor(cp);
+      int raiseBy = combiningMark::raiseAboveBase(markAnchor, combiningGlyph->top, combiningGlyph->height, lastBaseTop);
+      if (utf8IsThaiUpperLevelThreeMark(cp)) {
+        const uint8_t* peekPtr = reinterpret_cast<const uint8_t*>(text);
+        const uint32_t nextCp = utf8NextCodepoint(&peekPtr);
+        if (nextCp == 0x0E33) {
+          if (const EpdGlyph* nikhahitGlyph = font.getGlyph(0x0E4D, style)) {
+            thaiUpperMarkStack(0x0E4D, nikhahitGlyph->top, nikhahitGlyph->height, x, &raiseBy, &stackedThaiMinY,
+                                &hasStackedThaiUpper);
+          }
+        }
+      }
+      thaiUpperMarkStack(cp, combiningGlyph->top, combiningGlyph->height, x, &raiseBy, &stackedThaiMinY, &hasStackedThaiUpper);
       const int combiningX = x - raiseBy;
-      const int combiningY = combiningMark::centerOverRotated90CW(lastBaseY, lastBaseLeft, lastBaseWidth,
+      const int combiningY = combiningMark::anchorOverRotated90CW(markAnchor, lastBaseY, lastBaseLeft, lastBaseWidth,
                                                                   combiningGlyph->left, combiningGlyph->width);
       renderCharImpl<TextRotation::Rotated90CW>(*this, renderMode, font, cp, combiningX, combiningY, black, style);
       continue;
@@ -2060,6 +2089,7 @@ void GfxRenderer::drawTextRotated90CW(const int fontId, const int x, const int y
     lastBaseLeft = glyph ? glyph->left : 0;
     lastBaseWidth = glyph ? glyph->width : 0;
     lastBaseTop = glyph ? glyph->top : 0;
+    hasStackedThaiUpper = false;
     prevAdvanceFP = glyph ? glyph->advanceX : 0;  // 12.4 fixed-point
 
     renderCharImpl<TextRotation::Rotated90CW>(*this, renderMode, font, cp, x, lastBaseY, black, style);

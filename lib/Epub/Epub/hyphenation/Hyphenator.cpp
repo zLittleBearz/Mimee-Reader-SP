@@ -10,6 +10,10 @@
 #include "LanguageHyphenator.h"
 #include "LanguageRegistry.h"
 
+#include "generated/thai_words.h"
+
+#include <cstring>
+
 const LanguageHyphenator* Hyphenator::cachedHyphenator_ = nullptr;
 
 namespace {
@@ -83,6 +87,174 @@ std::vector<Hyphenator::BreakInfo> buildExplicitBreakInfos(const std::vector<Cod
 }
 
 bool isSegmentSeparator(const uint32_t cp) { return isExplicitHyphen(cp) || isApostrophe(cp); }
+
+// Thai script range (consonants, vowels, tone marks, etc). Used only to decide whether
+// a word should take the dictionary-segmentation path below; not a full validity check.
+bool isThaiCodepoint(const uint32_t cp) {
+  return (cp >= 0x0E01 && cp <= 0x0E3A) || (cp >= 0x0E40 && cp <= 0x0E4E);
+}
+
+bool isMostlyThaiWord(const std::vector<CodepointInfo>& cps) {
+  return !cps.empty() && isThaiCodepoint(cps[0].value);
+}
+
+// thai_words.h stores a prefix (front) compressed word list: each record is
+// [1 byte shared-prefix-length with the previous word][suffix bytes][0x00], with a
+// full (uncompressed) word every kThaiCheckpointStride entries as a "checkpoint" that
+// binary search can jump to directly.
+//
+// IMPORTANT: this decode/lookup path runs very frequently (once per candidate substring
+// during Thai line-break search), so it deliberately avoids std::string / heap allocation
+// entirely - everything here is stack buffers and raw byte comparisons.
+namespace {
+constexpr size_t kMaxThaiWordBytes = 256;
+
+int thaiLexCompare(const char* a, size_t aLen, const char* b, size_t bLen) {
+  const size_t minLen = aLen < bLen ? aLen : bLen;
+  for (size_t i = 0; i < minLen; ++i) {
+    const unsigned char ca = static_cast<unsigned char>(a[i]);
+    const unsigned char cb = static_cast<unsigned char>(b[i]);
+    if (ca != cb) return ca < cb ? -1 : 1;
+  }
+  if (aLen < bLen) return -1;
+  if (aLen > bLen) return 1;
+  return 0;
+}
+
+void decodeThaiCheckpointInto(size_t checkpointIdx, char* out, size_t& outLen) {
+  using namespace ThaiWords;
+  size_t i = kThaiCheckpointOffsets[checkpointIdx] + 1;
+  size_t n = 0;
+  while (kThaiWordsBlob[i] != '\0') {
+    out[n++] = kThaiWordsBlob[i++];
+  }
+  outLen = n;
+}
+}  // namespace
+
+bool thaiWordExists(const char* s, const size_t len) {
+  using namespace ThaiWords;
+  if (kThaiCheckpointCount == 0) return false;
+
+  char cpBuf[kMaxThaiWordBytes];
+  size_t cpLen;
+  decodeThaiCheckpointInto(0, cpBuf, cpLen);
+  if (thaiLexCompare(s, len, cpBuf, cpLen) < 0) return false;
+
+  size_t lo = 0, hi = kThaiCheckpointCount - 1;
+  while (lo < hi) {
+    const size_t mid = lo + (hi - lo + 1) / 2;
+    decodeThaiCheckpointInto(mid, cpBuf, cpLen);
+    if (thaiLexCompare(cpBuf, cpLen, s, len) <= 0) {
+      lo = mid;
+    } else {
+      hi = mid - 1;
+    }
+  }
+
+  const size_t blockStartWordIdx = lo * kThaiCheckpointStride;
+  const size_t blockEndWordIdx =
+      (lo + 1 < kThaiCheckpointCount) ? (lo + 1) * kThaiCheckpointStride : kThaiWordCount;
+
+  char buf[kMaxThaiWordBytes];
+  size_t offset = kThaiCheckpointOffsets[lo];
+  for (size_t idx = blockStartWordIdx; idx < blockEndWordIdx; ++idx) {
+    const uint8_t sharedLen = static_cast<uint8_t>(kThaiWordsBlob[offset]);
+    size_t i = offset + 1;
+    size_t n = sharedLen;
+    while (kThaiWordsBlob[i] != '\0') {
+      buf[n++] = kThaiWordsBlob[i++];
+    }
+    offset = i + 1;
+
+    const int cmp = thaiLexCompare(buf, n, s, len);
+    if (cmp == 0) return true;
+    if (cmp > 0) return false;
+  }
+
+  return false;
+}
+
+bool thaiSpanExists(const std::string& word, const std::vector<CodepointInfo>& cps, size_t startCp, size_t len) {
+  const size_t startByte = cps[startCp].byteOffset;
+  const size_t endCpIdx = startCp + len;
+  const size_t endByte = (endCpIdx < cps.size()) ? cps[endCpIdx].byteOffset : word.size();
+  return thaiWordExists(word.data() + startByte, endByte - startByte);
+}
+
+void addCompoundInternalBreaks(const std::string& word, const std::vector<CodepointInfo>& cps,
+                               const size_t spanStartCp, const size_t spanEndCp,
+                               std::vector<Hyphenator::BreakInfo>& breaks) {
+  const size_t spanLen = spanEndCp - spanStartCp;
+  if (spanLen <= 1) return;
+
+  constexpr size_t kMaxThaiWordCps = 25;
+
+  std::vector<bool> forward(spanLen + 1, false);
+  forward[0] = true;
+  for (size_t k = 0; k < spanLen; ++k) {
+    if (!forward[k]) continue;
+    const size_t maxLen = std::min(kMaxThaiWordCps, spanLen - k);
+    for (size_t len = 1; len <= maxLen; ++len) {
+      if (forward[k + len]) continue;
+      if (thaiSpanExists(word, cps, spanStartCp + k, len)) {
+        forward[k + len] = true;
+      }
+    }
+  }
+  if (!forward[spanLen]) return;
+
+  std::vector<bool> backward(spanLen + 1, false);
+  backward[spanLen] = true;
+  for (size_t kk = spanLen; kk-- > 0;) {
+    const size_t maxLen = std::min(kMaxThaiWordCps, spanLen - kk);
+    for (size_t len = 1; len <= maxLen && !backward[kk]; ++len) {
+      if (backward[kk + len] && thaiSpanExists(word, cps, spanStartCp + kk, len)) {
+        backward[kk] = true;
+      }
+    }
+  }
+
+  for (size_t k = 1; k < spanLen; ++k) {
+    if (forward[k] && backward[k]) {
+      breaks.push_back({cps[spanStartCp + k].byteOffset, false});
+    }
+  }
+}
+
+std::vector<Hyphenator::BreakInfo> computeThaiDictionaryBreaks(const std::string& word,
+                                                                const std::vector<CodepointInfo>& cps,
+                                                                bool& matched) {
+  constexpr size_t kMaxThaiWordCps = 25;
+  std::vector<Hyphenator::BreakInfo> breaks;
+  matched = false;
+
+  size_t i = 0;
+  while (i < cps.size()) {
+    const size_t maxLen = std::min(kMaxThaiWordCps, cps.size() - i);
+    size_t matchedLen = 0;
+    for (size_t len = maxLen; len >= 1; --len) {
+      if (thaiSpanExists(word, cps, i, len)) {
+        matchedLen = len;
+        break;
+      }
+    }
+
+    if (matchedLen == 0) {
+      ++i;
+      continue;
+    }
+
+    matched = true;
+    addCompoundInternalBreaks(word, cps, i, i + matchedLen, breaks);
+    i += matchedLen;
+    if (i < cps.size()) {
+      breaks.push_back({cps[i].byteOffset, false});
+    }
+  }
+
+  return breaks;
+}
 
 void appendSegmentPatternBreaks(const std::vector<CodepointInfo>& cps, const LanguageHyphenator& hyphenator,
                                 const bool includeFallback, std::vector<Hyphenator::BreakInfo>& outBreaks) {
@@ -219,6 +391,18 @@ std::vector<Hyphenator::BreakInfo> Hyphenator::breakOffsets(const std::string& w
     // Merge all break points into ascending byte-offset order.
     sortAndDedupeBreakInfos(explicitBreakInfos);
     return explicitBreakInfos;
+  }
+
+  // Thai has no spaces between words, so long Thai runs arrive here as one giant "word".
+  // Use dictionary longest-match to find real word boundaries (no hyphen needed, like CJK)
+  // instead of falling straight to the generic every-N-char + hyphen fallback below.
+  if (isMostlyThaiWord(cps)) {
+    bool thaiMatched = false;
+    auto thaiBreaks = computeThaiDictionaryBreaks(word, cps, thaiMatched);
+    if (thaiMatched) {
+      sortAndDedupeBreakInfos(thaiBreaks);
+      return thaiBreaks;
+    }
   }
 
   // Apostrophe-like separators split compounds into alphabetic segments; run Liang on each segment.

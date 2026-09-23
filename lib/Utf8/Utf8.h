@@ -55,9 +55,65 @@ inline bool utf8IsCjkCodepoint(const uint32_t cp) {
 }
 
 // Returns true for Unicode combining diacritical marks that should not advance the cursor.
+// Thai vowels that hang BELOW the consonant (sara u, sara uu, phinthu).
+// Rendered at font-native vertical position - never raised.
+inline bool utf8IsThaiLowerCombiningMark(const uint32_t cp) {
+  return cp >= 0x0E38 && cp <= 0x0E3A;
+}
+
+// Thai vowels/tone marks/misc that sit ABOVE the consonant.
+inline bool utf8IsThaiUpperCombiningMark(const uint32_t cp) {
+  return cp == 0x0E31
+      || (cp >= 0x0E34 && cp <= 0x0E37)
+      || (cp >= 0x0E47 && cp <= 0x0E4E);
+}
+
+// Level 2: sits directly on the consonant.
+inline bool utf8IsThaiUpperLevelTwoMark(const uint32_t cp) {
+  return cp == 0x0E31 || (cp >= 0x0E34 && cp <= 0x0E37) || cp == 0x0E47 || cp == 0x0E4D;
+}
+
+// Level 3: stacks ABOVE whatever is already placed.
+inline bool utf8IsThaiUpperLevelThreeMark(const uint32_t cp) {
+  return (cp >= 0x0E48 && cp <= 0x0E4C) || cp == 0x0E4E;
+}
+
+inline bool utf8IsThaiCombiningMark(const uint32_t cp) {
+  return utf8IsThaiLowerCombiningMark(cp) || utf8IsThaiUpperCombiningMark(cp);
+}
+
+// Returns true for Unicode combining diacritical marks that should not advance the cursor.
 inline bool utf8IsCombiningMark(const uint32_t cp) {
-  return (cp >= 0x0300 && cp <= 0x036F)      // Combining Diacritical Marks
-         || (cp >= 0x1DC0 && cp <= 0x1DFF)   // Combining Diacritical Marks Supplement
-         || (cp >= 0x20D0 && cp <= 0x20FF)   // Combining Diacritical Marks for Symbols
-         || (cp >= 0xFE20 && cp <= 0xFE2F);  // Combining Half Marks
+  return (cp >= 0x0300 && cp <= 0x036F)
+      || (cp >= 0x1DC0 && cp <= 0x1DFF)
+      || (cp >= 0x20D0 && cp <= 0x20FF)
+      || (cp >= 0xFE20 && cp <= 0xFE2F)
+      || utf8IsThaiCombiningMark(cp);
+}
+
+// Adjusts *raiseBy so a Thai "level 3" mark (tone marks etc.) stacks ABOVE a
+// "level 2" mark (vowel) already placed on the same base glyph. No-op for
+// non-Thai marks or when there's nothing to stack on. Caller must reset
+// *hasStackedUpper = false whenever a new base (non-combining) glyph is processed.
+inline void thaiUpperMarkStack(const uint32_t cp, const int glyphTop, const int glyphHeight, const int penY,
+                                int* raiseBy, int* stackedUpperMinY, bool* hasStackedUpper) {
+  if (!utf8IsThaiUpperCombiningMark(cp)) return;
+  int glyphMinY = penY - *raiseBy + glyphTop - glyphHeight;
+  int glyphMaxY = penY - *raiseBy + glyphTop;
+
+  if (utf8IsThaiUpperLevelThreeMark(cp) && *hasStackedUpper) {
+    constexpr int MIN_STACK_GAP_PX = 1;
+    const int desiredMaxY = *stackedUpperMinY - MIN_STACK_GAP_PX;
+    if (glyphMaxY > desiredMaxY) {
+      const int extraRaise = glyphMaxY - desiredMaxY;
+      *raiseBy += extraRaise;
+      glyphMinY -= extraRaise;
+      glyphMaxY -= extraRaise;
+    }
+  }
+
+  if (utf8IsThaiUpperLevelTwoMark(cp) || utf8IsThaiUpperLevelThreeMark(cp)) {
+    *stackedUpperMinY = (*hasStackedUpper && *stackedUpperMinY < glyphMinY) ? *stackedUpperMinY : glyphMinY;
+    *hasStackedUpper = true;
+  }
 }

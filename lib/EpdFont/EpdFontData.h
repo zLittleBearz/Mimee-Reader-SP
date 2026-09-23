@@ -33,32 +33,127 @@ constexpr float toFloat(int32_t fp) { return fp / static_cast<float>(1 << FRAC_B
 /// Helpers for positioning Unicode combining marks (U+0300 ff.) over a
 /// preceding base glyph without GPOS anchor tables.
 namespace combiningMark {
-
 constexpr int MIN_GAP_PX = 1;
 
-/// Compute the cursor-X at which to render a combining mark so its bitmap
-/// is visually centered over the base glyph's bitmap.
-constexpr int centerOver(int baseCursorPos, int baseLeft, int baseWidth, int markLeft, int markWidth) {
-  return baseCursorPos + baseLeft + baseWidth / 2 - markWidth / 2 - markLeft;
+enum class Anchor : uint8_t {
+  CenterRaised,
+  CenterNative,
+  RightNative,
+  LeftNative,
+  RightRaised,
+  RightRaisedNear,
+  RightNativeNearU,
+  RightNativeNearUU,
+  RightRaisedFar,
+};
+
+constexpr Anchor anchorFor(const uint32_t cp) {
+  switch (cp) {
+    case 0x05BC:
+    case 0x05BA:
+      return Anchor::CenterNative;
+    case 0x05C1:
+      return Anchor::RightNative;
+    case 0x05B9:
+    case 0x05C2:
+      return Anchor::LeftNative;
+    case 0x0E38:
+      return Anchor::RightNativeNearU;
+    case 0x0E39:
+      return Anchor::RightNativeNearUU;
+    case 0x0E3A:
+      return Anchor::CenterNative;
+    case 0x0E31:
+    case 0x0E49:
+      return Anchor::RightRaisedNear;
+    case 0x0E48:
+    case 0x0E4A:
+    case 0x0E4B:
+      return Anchor::RightRaised;
+    case 0x0E4C:
+      return Anchor::RightRaisedFar;
+    default:
+      return Anchor::CenterRaised;
+  }
 }
 
-/// Rotated-90CW variant of centerOver.  In the rotated coordinate system
-/// renderCharImpl uses (cursorY - left) instead of (cursorX + left), so
-/// every left/width term inverts sign.
-constexpr int centerOverRotated90CW(int baseCursorPos, int baseLeft, int baseWidth, int markLeft, int markWidth) {
-  return baseCursorPos - baseLeft - baseWidth / 2 + markWidth / 2 + markLeft;
+constexpr int anchorShift(const Anchor anchor, const int baseWidth, const int markWidth,
+                           const uint32_t baseCp = 0) {
+  switch (anchor) {
+    case Anchor::LeftNative:
+      return 0;
+    case Anchor::RightNative:
+      return baseWidth - markWidth;
+    case Anchor::RightRaisedNear: {
+      constexpr int MAI_HAN_AKAT_RIGHT_SHIFT_PX = 8;
+      return (baseWidth / 2 - markWidth / 2) + MAI_HAN_AKAT_RIGHT_SHIFT_PX;
+    }
+    case Anchor::RightNativeNearU: {
+      constexpr int DEFAULT_PX = 4;
+      constexpr int REDUCED_PX = 2;
+      constexpr int MORE_PX = 6;
+      constexpr int SO_PX = 3;
+      constexpr int RO_PX = 0;
+      int shiftPx = DEFAULT_PX;
+      switch (baseCp) {
+        case 0x0E18: case 0x0E22: case 0x0E2E: shiftPx = REDUCED_PX; break;
+        case 0x0E0C: case 0x0E11: case 0x0E12: case 0x0E13: shiftPx = MORE_PX; break;
+        case 0x0E2A: shiftPx = SO_PX; break;
+        case 0x0E23: shiftPx = RO_PX; break;
+        default: break;
+      }
+      return (baseWidth / 2 - markWidth / 2) + shiftPx;
+    }
+    case Anchor::RightNativeNearUU: {
+      constexpr int DEFAULT_PX = 4;
+      constexpr int REDUCED_PX = 2;
+      constexpr int MORE_PX = 6;
+      constexpr int SO_PX = 3;
+      constexpr int RO_PX = 0;
+      int shiftPx = DEFAULT_PX;
+      switch (baseCp) {
+        case 0x0E01: case 0x0E04: case 0x0E05: case 0x0E0A: case 0x0E14: case 0x0E15:
+        case 0x0E16: case 0x0E18: case 0x0E1C: case 0x0E1D: case 0x0E22: case 0x0E28:
+        case 0x0E29: case 0x0E2D: case 0x0E2E: shiftPx = REDUCED_PX; break;
+        case 0x0E0C: shiftPx = MORE_PX; break;
+        case 0x0E2A: shiftPx = SO_PX; break;
+        case 0x0E23: shiftPx = RO_PX; break;
+        default: break;
+      }
+      return (baseWidth / 2 - markWidth / 2) + shiftPx;
+    }
+    case Anchor::RightRaisedFar: {
+      constexpr int KARAN_RIGHT_SHIFT_PX = 6;
+      return (baseWidth / 2 - markWidth / 2) + KARAN_RIGHT_SHIFT_PX;
+    }
+    case Anchor::RightRaised: {
+      const int shifted = (baseWidth / 2 - markWidth / 2) + (baseWidth * 3 / 8);
+      const int maxShift = baseWidth - markWidth;
+      return (shifted > maxShift) ? maxShift : shifted;
+    }
+    default:
+      return baseWidth / 2 - markWidth / 2;
+  }
 }
 
-/// For combining marks that sit entirely above the baseline, compute how many
-/// pixels to raise the mark so there is at least MIN_GAP_PX between its bottom
-/// edge and the top of the base glyph.  Returns 0 for marks that extend to or
-/// below the baseline (e.g. cedilla, dot-below, ogonek).
-constexpr int raiseAboveBase(int markTop, int markHeight, int baseTop) {
+constexpr int anchorOver(const Anchor anchor, const int baseCursorPos, const int baseLeft, const int baseWidth,
+                          const int markLeft, const int markWidth, const uint32_t baseCp = 0) {
+  return baseCursorPos + baseLeft + anchorShift(anchor, baseWidth, markWidth, baseCp) - markLeft;
+}
+
+constexpr int anchorOverRotated90CW(const Anchor anchor, const int baseCursorPos, const int baseLeft,
+                                     const int baseWidth, const int markLeft, const int markWidth) {
+  return baseCursorPos - baseLeft - anchorShift(anchor, baseWidth, markWidth) + markLeft;
+}
+
+constexpr int raiseAboveBase(const Anchor anchor, const int markTop, const int markHeight, const int baseTop) {
+  if (anchor != Anchor::CenterRaised && anchor != Anchor::RightRaised && anchor != Anchor::RightRaisedNear &&
+      anchor != Anchor::RightRaisedFar)
+    return 0;
   if (markTop - markHeight <= 0) return 0;
   const int gap = markTop - markHeight - baseTop;
   return (gap < MIN_GAP_PX) ? (MIN_GAP_PX - gap) : 0;
 }
-
 }  // namespace combiningMark
 
 /// Fixed-point conventions used by EpdGlyph and EpdFontData:
