@@ -1,4 +1,5 @@
 #pragma once
+
 #include <GfxRenderer.h>
 
 #include <cstdint>
@@ -11,20 +12,20 @@
 #include "util/LongPress.h"
 
 struct KeyDef {
-  char primary;
-  char secondary;
+  const char* primary;    // UTF-8 label for the unshifted key (never null)
+  const char* secondary;  // UTF-8 label for the shifted key, or nullptr if none
 };
 
-enum class SpecialKeyType { Shift, Mode, Space, Del, Ok };
+enum class SpecialKeyType { Shift, Mode, Globe, Space, Del, Ok };
 
 enum class InputType { Text, Password, Url };
 
 class KeyboardEntryActivity : public Activity {
  public:
   explicit KeyboardEntryActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
-                                 std::string title = "Enter Text", std::string initialText = "",
-                                 const size_t maxLength = 0, InputType inputType = InputType::Text,
-                                 const uint8_t* headerIcon = nullptr, const int headerIconSize = 32)
+                                  std::string title = "Enter Text", std::string initialText = "",
+                                  const size_t maxLength = 0, InputType inputType = InputType::Text,
+                                  const uint8_t* headerIcon = nullptr, const int headerIconSize = 32)
       : Activity("KeyboardEntry", renderer, mappedInput),
         title(std::move(title)),
         text(std::move(initialText)),
@@ -35,15 +36,16 @@ class KeyboardEntryActivity : public Activity {
 
   // Backward-compatible constructor for older callers still using isPassword.
   explicit KeyboardEntryActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
-                                 std::string title, std::string initialText, const size_t maxLength,
-                                 const bool isPassword)
+                                  std::string title, std::string initialText, const size_t maxLength,
+                                  const bool isPassword)
       : KeyboardEntryActivity(renderer, mappedInput, std::move(title), std::move(initialText), maxLength,
-                              isPassword ? InputType::Password : InputType::Text) {}
+                               isPassword ? InputType::Password : InputType::Text) {}
 
   void onEnter() override;
   void onExit() override;
   void loop() override;
   void render(RenderLock&&) override;
+
   uint8_t getUiTransitionRefreshWeight() const override { return UI_TRANSITION_REFRESH_WEIGHT_DENSE; }
 
  private:
@@ -53,6 +55,7 @@ class KeyboardEntryActivity : public Activity {
   InputType inputType;
   const uint8_t* headerIcon = nullptr;  // optional icon drawn before the header title
   int headerIconSize = 32;              // native pixel size of headerIcon bitmap
+
   bool passwordVisible = false;
 
   ButtonNavigator buttonNavigator;
@@ -61,15 +64,18 @@ class KeyboardEntryActivity : public Activity {
   int selectedCol = 0;
   int shiftState = 0;
   bool symMode = false;
+  bool thaiMode = false;  // false = English (Latin) layout, true = Thai (Kedmanee-based) layout
   bool confirmHeld = false;
   bool confirmLongHandled = false;
 
   bool cursorMode = false;
   bool togglePos = false;
   size_t cursorPos = 0;
+
   long_press::Button upPress_;
   long_press::Button downPress_;
   long_press::Button rightPress_;
+
   size_t savedCursorPos = 0;
   size_t rightStartCursorPos = 0;
 
@@ -91,135 +97,55 @@ class KeyboardEntryActivity : public Activity {
   static constexpr int COLS = 10;
   static constexpr int ABC_ROWS = 4;
   static constexpr int SYM_ROWS = 4;
-  static constexpr int BOTTOM_KEY_COUNT = 5;
+  // Shift, Mode(#@!), Globe(EN/TH), Space, Del, Ok
+  static constexpr int BOTTOM_KEY_COUNT = 6;
 
   static constexpr KeyDef abcLayout[ABC_ROWS][COLS] = {
-      {{'1', '!'},
-       {'2', '@'},
-       {'3', '#'},
-       {'4', '$'},
-       {'5', '%'},
-       {'6', '^'},
-       {'7', '&'},
-       {'8', '*'},
-       {'9', '('},
-       {'0', ')'}},
-      {{'q', 'Q'},
-       {'w', 'W'},
-       {'e', 'E'},
-       {'r', 'R'},
-       {'t', 'T'},
-       {'y', 'Y'},
-       {'u', 'U'},
-       {'i', 'I'},
-       {'o', 'O'},
-       {'p', 'P'}},
-      {{'a', 'A'},
-       {'s', 'S'},
-       {'d', 'D'},
-       {'f', 'F'},
-       {'g', 'G'},
-       {'h', 'H'},
-       {'j', 'J'},
-       {'k', 'K'},
-       {'l', 'L'},
-       {'-', '_'}},
-      {{'z', 'Z'},
-       {'x', 'X'},
-       {'c', 'C'},
-       {'v', 'V'},
-       {'b', 'B'},
-       {'n', 'N'},
-       {'m', 'M'},
-       {'=', '+'},
-       {'.', '>'},
-       {',', '<'}},
+      {{"1", "!"}, {"2", "@"}, {"3", "#"}, {"4", "$"}, {"5", "%"},
+       {"6", "^"}, {"7", "&"}, {"8", "*"}, {"9", "("}, {"0", ")"}},
+      {{"q", "Q"}, {"w", "W"}, {"e", "E"}, {"r", "R"}, {"t", "T"},
+       {"y", "Y"}, {"u", "U"}, {"i", "I"}, {"o", "O"}, {"p", "P"}},
+      {{"a", "A"}, {"s", "S"}, {"d", "D"}, {"f", "F"}, {"g", "G"},
+       {"h", "H"}, {"j", "J"}, {"k", "K"}, {"l", "L"}, {"-", "_"}},
+      {{"z", "Z"}, {"x", "X"}, {"c", "C"}, {"v", "V"}, {"b", "B"},
+       {"n", "N"}, {"m", "M"}, {"=", "+"}, {".", ">"}, {",", "<"}},
   };
 
   static constexpr KeyDef urlLayout[ABC_ROWS][COLS] = {
-      {{'1', '!'},
-       {'2', '@'},
-       {'3', '#'},
-       {'4', '$'},
-       {'5', '%'},
-       {'6', '^'},
-       {'7', '&'},
-       {'8', '*'},
-       {'9', '('},
-       {'0', ')'}},
-      {{'q', 'Q'},
-       {'w', 'W'},
-       {'e', 'E'},
-       {'r', 'R'},
-       {'t', 'T'},
-       {'y', 'Y'},
-       {'u', 'U'},
-       {'i', 'I'},
-       {'o', 'O'},
-       {'p', 'P'}},
-      {{'a', 'A'},
-       {'s', 'S'},
-       {'d', 'D'},
-       {'f', 'F'},
-       {'g', 'G'},
-       {'h', 'H'},
-       {'j', 'J'},
-       {'k', 'K'},
-       {'l', 'L'},
-       {'-', '_'}},
-      {{'z', 'Z'},
-       {'x', 'X'},
-       {'c', 'C'},
-       {'v', 'V'},
-       {'b', 'B'},
-       {'n', 'N'},
-       {'m', 'M'},
-       {':', '+'},
-       {'.', '>'},
-       {'/', '<'}},
+      {{"1", "!"}, {"2", "@"}, {"3", "#"}, {"4", "$"}, {"5", "%"},
+       {"6", "^"}, {"7", "&"}, {"8", "*"}, {"9", "("}, {"0", ")"}},
+      {{"q", "Q"}, {"w", "W"}, {"e", "E"}, {"r", "R"}, {"t", "T"},
+       {"y", "Y"}, {"u", "U"}, {"i", "I"}, {"o", "O"}, {"p", "P"}},
+      {{"a", "A"}, {"s", "S"}, {"d", "D"}, {"f", "F"}, {"g", "G"},
+       {"h", "H"}, {"j", "J"}, {"k", "K"}, {"l", "L"}, {"-", "_"}},
+      {{"z", "Z"}, {"x", "X"}, {"c", "C"}, {"v", "V"}, {"b", "B"},
+       {"n", "N"}, {"m", "M"}, {":", "+"}, {".", ">"}, {"/", "<"}},
   };
 
   static constexpr KeyDef symLayout[SYM_ROWS][COLS] = {
-      {{'1', '\0'},
-       {'2', '\0'},
-       {'3', '\0'},
-       {'4', '\0'},
-       {'5', '\0'},
-       {'6', '\0'},
-       {'7', '\0'},
-       {'8', '\0'},
-       {'9', '\0'},
-       {'0', '\0'}},
-      {{'!', '\0'},
-       {'@', '\0'},
-       {'#', '\0'},
-       {'$', '\0'},
-       {'%', '\0'},
-       {'^', '\0'},
-       {'&', '\0'},
-       {'*', '\0'},
-       {'(', '\0'},
-       {')', '\0'}},
-      {{'-', '\0'},
-       {'_', '\0'},
-       {'=', '\0'},
-       {'+', '\0'},
-       {'[', '\0'},
-       {']', '\0'},
-       {'{', '\0'},
-       {'}', '\0'},
-       {';', '\0'},
-       {':', '\0'}},
-      {{'\'', '\0'},
-       {'"', '\0'},
-       {'/', '\0'},
-       {'\\', '\0'},
-       {'|', '\0'},
-       {'?', '\0'},
-       {'.', '\0'},
-       {',', '\0'},
-       {'~', '\0'},
-       {'`', '\0'}},
+      {{"1", nullptr}, {"2", nullptr}, {"3", nullptr}, {"4", nullptr}, {"5", nullptr},
+       {"6", nullptr}, {"7", nullptr}, {"8", nullptr}, {"9", nullptr}, {"0", nullptr}},
+      {{"!", nullptr}, {"@", nullptr}, {"#", nullptr}, {"$", nullptr}, {"%", nullptr},
+       {"^", nullptr}, {"&", nullptr}, {"*", nullptr}, {"(", nullptr}, {")", nullptr}},
+      {{"-", nullptr}, {"_", nullptr}, {"=", nullptr}, {"+", nullptr}, {"[", nullptr},
+       {"]", nullptr}, {"{", nullptr}, {"}", nullptr}, {";", nullptr}, {":", nullptr}},
+      {{"'", nullptr}, {"\"", nullptr}, {"/", nullptr}, {"\\", nullptr}, {"|", nullptr},
+       {"?", nullptr}, {".", nullptr}, {",", nullptr}, {"~", nullptr}, {"`", nullptr}},
+  };
+
+  // Thai layout, mapped onto this keyboard's 4x10 grid using the same physical-key positions as
+  // the standard Thai Kedmanee layout (TIS 820), so it lines up with what anyone who knows a real
+  // Thai keyboard would expect. The two overflow keys of the real Kedmanee number row ('-' & '=')
+  // have no slot here, same as abcLayout above only keeping the 10 digit keys.
+  static constexpr KeyDef thaiLayout[ABC_ROWS][COLS] = {
+      {{"ๅ", "+"}, {"/", "๑"}, {"-", "๒"}, {"ภ", "๓"}, {"ถ", "๔"},
+       {"ุ", "ู"}, {"ึ", "฿"}, {"ค", "๕"}, {"ต", "๖"}, {"จ", "๗"}},
+      {{"ๆ", "๐"}, {"ไ", "\""}, {"ำ", "ฎ"}, {"พ", "ฑ"}, {"ะ", "ธ"},
+       {"ั", "ํ"}, {"ี", "๊"}, {"ร", "ณ"}, {"น", "ฯ"}, {"ย", "ญ"}},
+      {{"ฟ", "ฤ"}, {"ห", "ฆ"}, {"ก", "ฏ"}, {"ด", "โ"}, {"เ", "ฌ"},
+       {"้", "็"}, {"่", "๋"}, {"า", "ษ"}, {"ส", "ศ"}, {"ว", "ซ"}},
+      {{"ผ", "("}, {"ป", ")"}, {"แ", "ฉ"}, {"อ", "ฮ"}, {"ิ", "ฺ"},
+       {"ื", "์"}, {"ท", "?"}, {"ม", "ฒ"}, {"ใ", "ฬ"}, {"ฝ", "ฦ"}},
   };
 
   static const char* const shiftString[2];
@@ -228,10 +154,16 @@ class KeyboardEntryActivity : public Activity {
   int getContentColCount() const;
   int getTotalRowCount() const;
   bool isBottomRow(int row) const;
-  char getSelectedChar() const;
-  char getAlternativeChar() const;
+  const char* getSelectedKey() const;
+  const char* getAlternativeKey() const;
   bool handleKeyPress();
   bool insertChar(char c);
   void insertString(const std::string& str);
   void mapColContentBottom(int& col, bool goingUp) const;
+
+  // UTF-8 helpers: text/cursorPos are always kept on codepoint boundaries so Thai (3-byte)
+  // characters never get split by cursor movement, backspace, or line-wrapping.
+  static size_t utf8PrevPos(const std::string& s, size_t pos);
+  static size_t utf8NextPos(const std::string& s, size_t pos);
+  static size_t utf8CharLen(const std::string& s, size_t pos);
 };
