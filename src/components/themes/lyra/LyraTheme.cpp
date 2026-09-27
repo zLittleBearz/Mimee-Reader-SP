@@ -902,7 +902,7 @@ void LyraTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const std:
 
     // Panel 1: Title/Author
     const int p1H = std::max(panelMinHeight, titleBlockHeight + authorHeight + panelPad * 2);
-    drawCyberpunkPanelBorder(renderer, panelX, currentY, panelW, p1H);
+    // drawCyberpunkPanelBorder(renderer, panelX, currentY, panelW, p1H);
     int py = currentY + panelPad;
     for (const auto& line : titleLines) {
       renderer.drawText(UI_12_FONT_ID, textX, py, line.c_str(), true, EpdFontFamily::BOLD);
@@ -916,7 +916,7 @@ void LyraTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const std:
 
     // Panel 2: Book progress
     const int p2H = std::max(panelMinHeight, progressRowHeight + panelPad * 2);
-    drawCyberpunkPanelBorder(renderer, panelX, currentY, panelW, p2H);
+    // drawCyberpunkPanelBorder(renderer, panelX, currentY, panelW, p2H);
     const int progressTextWidth = renderer.getTextWidth(SMALL_FONT_ID, progressText.c_str(), EpdFontFamily::BOLD);
     const int progressBarWidth = std::max(24, textWidth - progressTextWidth - progressRowGap);
     const int progressBarY = currentY + panelPad + std::max(0, (p2H - panelPad * 2 - progressBarHeight) / 2);
@@ -928,7 +928,7 @@ void LyraTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const std:
 
     // Panel 3: Statistics
     const int p3H = std::max(panelMinHeight, statsLineHeight + panelPad * 2);
-    drawCyberpunkPanelBorder(renderer, panelX, currentY, panelW, p3H);
+    // drawCyberpunkPanelBorder(renderer, panelX, currentY, panelW, p3H);
     auto statsLine = renderer.truncatedText(SMALL_FONT_ID, statsText.c_str(), textWidth);
     renderer.drawText(SMALL_FONT_ID, textX,
                       currentY + panelPad + std::max(0, (p3H - panelPad * 2 - smallLineHeight) / 2),

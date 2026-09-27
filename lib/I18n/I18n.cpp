@@ -28,8 +28,8 @@ const char* I18n::get(StrId id) const {
 
   const LangStrings lang = getLanguageStrings(_language);
   const uint16_t off = lang.offsets[index];
-  if (off & 0x8000) {
-    return STRINGS_EN_DATA + (off & 0x7FFF);
+  if (lang.sameAsEn && (lang.sameAsEn[index / 8] & (1 << (index % 8)))) {
+    return STRINGS_EN_DATA + off;
   }
   return lang.data + off;
 }

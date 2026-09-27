@@ -463,9 +463,11 @@ def generate_keys_header(
         "namespace i18n_strings {",
     ]
 
-    for code in languages:
+    for i, code in enumerate(languages):
         lines.append(f"extern const char STRINGS_{code}_DATA[];")
         lines.append(f"extern const uint16_t OFFSETS_{code}[];")
+        if i != 0:
+            lines.append(f"extern const uint8_t SAMEEN_{code}[];")
 
     lines.append("}  // namespace i18n_strings")
     lines.append("")
@@ -502,10 +504,12 @@ def generate_keys_header(
     lines.append("")
 
     # LangStrings struct
-    lines.append("// Holds a flat string blob and its offset table for one language")
+    lines.append("// Holds a flat string blob, its offset table, and (for non-English")
+    lines.append("// languages) a bitmap flagging which strings reuse the English blob.")
     lines.append("struct LangStrings {")
     lines.append("  const char* data;")
     lines.append("  const uint16_t* offsets;")
+    lines.append("  const uint8_t* sameAsEn;  // nullptr for English itself")
     lines.append("};")
     lines.append("")
 
@@ -513,15 +517,16 @@ def generate_keys_header(
     lines.append("// Helper function to get string data for a language")
     lines.append("inline LangStrings getLanguageStrings(Language lang) {")
     lines.append("  switch (lang) {")
-    for code in languages:
+    for i, code in enumerate(languages):
+        same_as_en = "nullptr" if i == 0 else f"i18n_strings::SAMEEN_{code}"
         lines.append(f"    case Language::{code}:")
         lines.append(
-            f"      return {{i18n_strings::STRINGS_{code}_DATA, i18n_strings::OFFSETS_{code}}};"
+            f"      return {{i18n_strings::STRINGS_{code}_DATA, i18n_strings::OFFSETS_{code}, {same_as_en}}};"
         )
     first_code = languages[0]
     lines.append("    default:")
     lines.append(
-        f"      return {{i18n_strings::STRINGS_{first_code}_DATA, i18n_strings::OFFSETS_{first_code}}};"
+        f"      return {{i18n_strings::STRINGS_{first_code}_DATA, i18n_strings::OFFSETS_{first_code}, nullptr}};"
     )
     lines.append("  }")
     lines.append("}")
@@ -659,6 +664,7 @@ def generate_strings_cpp(
     for lang_idx, code in enumerate(languages):
         lang_strings = [translations[key][lang_idx] for key in string_keys]
         is_english = lang_idx == 0
+        same_as_en: List[bool] = []
 
         if is_english:
             # Precompute byte offsets (UTF-8 encoded, +1 per string for null terminator)
@@ -667,10 +673,10 @@ def generate_strings_cpp(
             for s in lang_strings:
                 offsets.append(current_offset)
                 current_offset += len(s.encode("utf-8")) + 1
-            if current_offset > 0x7FFF:
+            if current_offset > 0xFFFF:
                 raise ValueError(
                     f"Language {code}: blob size ({current_offset} bytes) exceeds "
-                    "15-bit offset limit (32767)"
+                    "16-bit offset limit (65535)"
                 )
             en_offsets = list(offsets)
             blob_strings = lang_strings
@@ -680,15 +686,17 @@ def generate_strings_cpp(
             blob_strings = []
             for i, (s, en_s) in enumerate(zip(lang_strings, en_strings)):
                 if s == en_s:
-                    offsets.append(en_offsets[i] | 0x8000)
+                    offsets.append(en_offsets[i])
+                    same_as_en.append(True)
                 else:
                     offsets.append(current_offset)
                     current_offset += len(s.encode("utf-8")) + 1
                     blob_strings.append(s)
-            if current_offset > 0x7FFF:
+                    same_as_en.append(False)
+            if current_offset > 0xFFFF:
                 raise ValueError(
                     f"Language {code}: blob size ({current_offset} bytes) exceeds "
-                    "15-bit offset limit (32767)"
+                    "16-bit offset limit (65535)"
                 )
 
         # Flat string data blob — all strings concatenated with \0 separators.
@@ -709,6 +717,24 @@ def generate_strings_cpp(
         lines.append("};")
         lines.append("")
 
+        # "Same as English" bitmap — 1 bit per StrId, non-English languages only.
+        if not is_english:
+            bitmap: List[int] = []
+            for i in range(0, len(same_as_en), 8):
+                byte = 0
+                for j, flag in enumerate(same_as_en[i : i + 8]):
+                    if flag:
+                        byte |= 1 << j
+                bitmap.append(byte)
+
+            lines.append(f"const uint8_t SAMEEN_{code}[] = {{")
+            chunk_size_bm = 16
+            for i in range(0, len(bitmap), chunk_size_bm):
+                chunk = bitmap[i : i + chunk_size_bm]
+                lines.append("    " + ", ".join(f"0x{b:02x}" for b in chunk) + ",")
+            lines.append("};")
+            lines.append("")
+
     lines.append("}  // namespace i18n_strings")
     lines.append("")
 
@@ -721,6 +747,10 @@ def generate_strings_cpp(
         )
         lines.append("                  static_cast<size_t>(StrId::_COUNT),")
         lines.append(f'              "OFFSETS_{code} size mismatch");')
+    for code in languages[1:]:
+        lines.append(f"static_assert(sizeof(i18n_strings::SAMEEN_{code}) ==")
+        lines.append("                  (static_cast<size_t>(StrId::_COUNT) + 7) / 8,")
+        lines.append(f'              "SAMEEN_{code} size mismatch");')
 
     _write_file(output_path, lines, verbose)
 
